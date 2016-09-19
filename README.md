@@ -1,5 +1,5 @@
 # dataingeniør
-Prosjekter og øvinger relatert til dataingeniør studet.
+Prosjekter og øvinger relatert til dataingeniør studiet.
 
 Fag:
 * Programmering grunnkurs
