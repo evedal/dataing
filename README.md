@@ -1,7 +1,7 @@
 # dataingeniør
 Prosjekter og øvinger relatert til dataingeniør studet.
 
-- Fag
+Fag:
 * Programmering grunnkurs
 * Videregående grunnkurs
 * Algoritmer og datastrukturer
