@@ -33,10 +33,10 @@ class Prev():
 class WEdge():
 
     end = None
-    next = None
+    _next = None
     weight = None
-    def __init__(self,end,next, weight):
-        self.next = next
+    def __init__(self,end,_next, weight):
+        self._next = _next
         self.end = end
         self.weight = weight
 
@@ -73,7 +73,7 @@ class PriorityQue(object):
 
     def pop_node(self):
         while self.heap:
-            priority, count, node = heapq.heappop(self.heap)
+            node = heapq.heappop(self.heap)[2]
             if node is not self.REMOVED:
                 del self.entry_finder[node]
                 return node
@@ -90,14 +90,15 @@ class Graph():
     def shorten(self,node,edge):
         prev1 = node.d
         prev2 = edge.end.d
-        if prev2.dist > prev1.dist + edge.weight:
-            prev2.dist = prev1.dist+edge.weight
+        newEdge = prev1.dist + edge.weight
+        if prev2.dist > newEdge:
+            prev2.dist = newEdge
             prev2.prev = node
-            self.pQue.add_node(edge.end, priority=prev2.dist)
+            self.pQue.add_node(edge.end, prev2.dist)
 
     def initprev(self,s):
-        for i, node in enumerate(self.nodes):
-            self.nodes[i].d = Prev()
+        for node in self.nodes:
+            node.d = Prev()
         s.d.dist = 0
 
     #Opens file, formats input and adds to class variables
@@ -124,12 +125,12 @@ class Graph():
     def dijkstra(self,s):
         self.initprev(self.nodes[s])
         self.pQue = PriorityQue(self.nodes)
-        for i in reversed(range(1,len(self.nodes))):
+        for i in reversed(range(1,self.N)):
             node = self.pQue.pop_node()
             wEdge = node.edge1
             while wEdge:
                 self.shorten(node, wEdge)
-                wEdge = wEdge.next
+                wEdge = wEdge._next
 
 def main1():
     nodenummer = 0
@@ -154,6 +155,8 @@ def main1():
             print(i, "   |       |  nåes ikke")
 
     print("File reading execution time for",filnavn,":",filereadtime.seconds,"s")
-    print("Algorithm execution time for",filnavn,":",alorithmtime.seconds,"s")
+    print("Algorithm execution time for",filnavn,":",alorithmtime.microseconds,"s")
 
 main1()
+
+#testdata - minne: 120.9mb execution 6,9 + 6,3 + 5.8 + 4.7
