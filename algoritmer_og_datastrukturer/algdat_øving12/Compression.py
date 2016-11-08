@@ -2,7 +2,9 @@ from struct import unpack, pack
 from datetime import datetime
 import time
 import os
+import heapq
 from collections import defaultdict
+from bitstring import BitArray, Bits
 
 class Compression:
 
@@ -163,44 +165,307 @@ class Compression:
             c2_a = []
             count = 0
             print("Finner ulikheter")
+            print("")
             while c1 or c2:
                 if not c1 == c2:
                     count += 1
-                    print(c1, c2)
                 if c1:
                     c1_a.append(c1)
                 if c2:
                     c2_a.append(c2)
                 c1 = orig_file.read(1)
                 c2 = comp_file.read(1)
-            print(c1_a)
-            print(c2_a)
             print("Fant", count, "ulikheter mellom original og utpakket fil")
             print("Original:", str(len(c1_a)) + "B", "Utpakket:", str(len(c2_a)) + "B")
 
 
-def compress():
-    comp = Compression()
-    filnavn = input("Skriv fil for komprimering:")
-    print("Fil som pakkes:",filnavn,"| Original størrelse:",str(os.path.getsize(filnavn))+"B | Lagres som: comp_"+filnavn)
-    start = datetime.now()
-    comp_filnavn = comp.lempel_ziv(filnavn)
-    print("Komprimering tok:",str((datetime.now()-start).seconds)+'s')
-    print("Ny størrelse er:",str(os.path.getsize(comp_filnavn))+"B")
+class Node:
+    def __init__(self,value,left=None,right=None,char=None,parent = None):
+        self.left_branch = left
+        self.right_branch = right
+        self.parent = parent
+        self.value = value
+        self.char = char
+    def __lt__(self, other):
+        if self.value > other.value:
+            return 1
+        elif self.value == other.value:
+            return 0
+        else:
+            return -1
+    def __str__(self):
+        out = str(self.char) if self.char else str(self.value)
+        return out
 
-def extract():
+class PriorityQue(object):
+    def __init__(self, nodes=[]):
+        self.heap = []
+        self.entry_finder = dict()
+        for node in nodes:
+            entry = [node.value, node]
+            self.add_node2(entry)
+        self.REMOVED = '<remove_marker>'
+
+    def add_node(self,node,priority=0):
+        if node in self.entry_finder:
+            self.remove_node(node)
+        entry = [node.value,node]
+        self.entry_finder[node] = entry
+        heapq.heappush(self.heap,entry)
+
+    #Add a node using already created entry, useful for initialization
+    def add_node2(self,entry):
+        if entry[-1] in self.entry_finder:
+            self.remove_node(entry[-1])
+        self.entry_finder[entry[-1]] = entry
+        heapq.heappush(self.heap,entry)
+
+    def remove_node(self,node):
+        entry = self.entry_finder.pop(node)
+        entry[-1] = self.REMOVED
+
+
+    def pop_node(self):
+        while self.heap:
+            node = heapq.heappop(self.heap)[-1]
+            if node is not self.REMOVED:
+                del self.entry_finder[node]
+                return node
+        raise KeyError('pop from an empty priority queue')
+
+class HuffmanTree:
+    def __init__(self):
+        self.nodes = []
+    def add_node(self,node):
+        pass
+    def init_nodes(self,char_array):
+        for char in char_array:
+            self.nodes.append(Node(char[1],char=char[0]))
+
+    def create_tree(self,char_array):
+        self.init_nodes(char_array)
+        pq = PriorityQue(self.nodes)
+        node = None
+        heigth = 0
+        while True:
+            try:
+                rigth_branch = pq.pop_node()
+                left_branch = pq.pop_node()
+                value = rigth_branch.value + left_branch.value
+                node = Node(left=left_branch,right=rigth_branch,value=value)
+                left_branch.parent = node
+                rigth_branch.parent = node
+                pq.add_node(node)
+                heigth += 1
+            except KeyError:
+                break
+        return node
+
+    def byte_len(self,int_type):
+        length = 0
+        while int_type:
+            int_type >>= 1
+            length += 1
+        return length
+
+    def give_char_values(self,for_encoding=False):
+        value_pairs = {}
+        for node in self.nodes:
+            parent_len = 0
+            while node.parent:
+                parent_len += 1
+                node = node.parent
+        for node in self.nodes:
+
+            byte_int = 0
+            byte_postition = 0
+            parent = node.parent
+            temp_node = node
+            while parent:
+                if parent.right_branch == temp_node:
+                    byte_int += 2**byte_postition
+                byte_postition += 1
+                temp_node = parent
+                parent = parent.parent
+            #Always add a 1 before start of bit_pattern
+            byte_int += 2 ** byte_postition
+            byte_rep = byte_int.to_bytes(2,"big",signed=False)
+            length = self.byte_len(byte_int)
+            single_byte1, single_byte2 = unpack('bb', byte_rep)
+            value_pairs.update({node.char:[pack("b",single_byte1),pack("b",single_byte2)]})
+        return value_pairs
+
+class HuffmanCompression:
+    def find_frequency(self,text):
+        frequency = []
+        for char in text:
+            for row in frequency:
+                if row[0] is char:
+                    row[1] += 1
+                    break
+            else:
+                frequency.append([char, 1])
+        return frequency
+
+    def prep_for_print(self,value_pairs, bits_array):
+        output = [(10).to_bytes(1,"big",signed=False)] * 512
+        for char, char_rep in value_pairs.items():
+            char_pos = int.from_bytes(char,'big',signed=False)
+            output[char_pos * 2] = char_rep[0]
+            output[char_pos * 2 +1] = char_rep[1]
+        missing = len(bits_array) % 8
+        bits_array.append(Bits(bytes=b'\x00', length=8-missing))
+        output.append(bits_array.bytes)
+        return output
+
+    def byte_len(self,int_type):
+        length = 0
+        while int_type:
+            int_type >>= 1
+            length += 1
+        return length
+
+    def encode(self,value_pair,byte_array):
+        output_array = BitArray()
+        for byte in byte_array:
+            byte_value = value_pair.get(byte)
+            byte_value = Bits(byte_value[0] + byte_value[1])[1:]
+            byte_len = self.byte_len(byte_value)
+            byte_value = byte_value[(-byte_len):]
+            output_array.append(byte_value)
+        return output_array
+
+    def create_lookup_dict(self,byte_array):
+        byte_array = byte_array[0:512]
+        return_dict = {}
+        count = 0
+        for i in range(0,len(byte_array),2):
+            key = Bits(byte_array[i]+byte_array[i+1])
+            byte_len = self.byte_len(key)
+            key = key[(-byte_len):]
+            value = (count).to_bytes(1,"big")
+            count += 1
+            return_dict.update({key:value})
+        return return_dict
+
+    def decode(self,byte_array):
+        lookup = self.create_lookup_dict(byte_array)
+        byte_array = byte_array[512:]
+        return_array = []
+        bit_array = BitArray()
+        for byte in byte_array:
+            bit_array.append(byte)
+        read = 0
+        bit_length = 1
+        while bit_length + read <= len(bit_array):
+            bit_hashable = Bits(bit_array[read:read+bit_length])
+            if bit_hashable in lookup:
+                return_array.append(lookup.get(bit_hashable))
+                read = bit_length + read
+                bit_length = 1
+            else:
+                bit_length += 1
+
+
+        return return_array
+
+
+    def compress_file(self,filename):
+        comp = Compression()
+        char_array = comp.read_file_as_binary(filename)
+        frequency = self.find_frequency(char_array)
+        ht = HuffmanTree()
+        ht.create_tree(frequency)
+        value_pairs = ht.give_char_values()
+        value_pairs_for_encoding = ht.give_char_values(for_encoding=True)
+        bits_array = self.encode(value_pairs_for_encoding,char_array)
+        printable = self.prep_for_print(value_pairs,bits_array)
+        return comp.populate_file_with_binary("huff_"+filename,printable)
+
+    def decode_file(self,filename,ferdig_filnavn):
+        comp = Compression()
+        byte_array = comp.read_file_as_binary(filename)
+        comp_byte_array = self.decode(byte_array)
+        return comp.populate_file_with_binary(ferdig_filnavn,comp_byte_array)
+
+
+
+def compress(choice,filnavn):
+    choice = int(choice)
     comp = Compression()
+    if choice == 3:
+        print("Fil som pakkes:",filnavn,"| Original størrelse:",str(os.path.getsize(filnavn))+"B | Lagres som: comp_"+filnavn)
+        start = datetime.now()
+        comp_filnavn = comp.lempel_ziv(filnavn)
+        print("Lempel_ziv tok:",str((datetime.now()-start).seconds)+'s')
+        print("Ny størrelse er:",str(os.path.getsize(comp_filnavn))+"B")
+        huff_comp = HuffmanCompression()
+        start = datetime.now()
+        print("Fil som pakkes:",comp_filnavn,"| Original størrelse:",str(os.path.getsize(comp_filnavn))+"B | Lagres som: huff_"+comp_filnavn)
+        comp2_filnavn = huff_comp.compress_file(comp_filnavn)
+        print("Huffman tok:",str((datetime.now()-start).seconds)+'s')
+        print("Ny størrelse er:",str(os.path.getsize(comp2_filnavn))+"B")
+    elif choice == 1:
+        print("Fil som pakkes:", filnavn, "| Original størrelse:",str(os.path.getsize(filnavn)) + "B | Lagres som: comp_" + filnavn)
+        start = datetime.now()
+        comp_filnavn = comp.lempel_ziv(filnavn)
+        print("Lempel_ziv tok:", str((datetime.now() - start).seconds) + 's')
+        print("Ny størrelse er:", str(os.path.getsize(comp_filnavn)) + "B")
+    else:
+        print("Fil som pakkes:", filnavn, "| Original størrelse:",str(os.path.getsize(filnavn)) + "B | Lagres som: huff_" + filnavn)
+        huff_comp = HuffmanCompression()
+        start = datetime.now()
+        comp2_filnavn = huff_comp.compress_file(filnavn)
+        print("Huffman tok:",str((datetime.now()-start).seconds)+'s')
+        print("Ny størrelse er:",str(os.path.getsize(comp2_filnavn))+"B")
+
+
+def extract(choice):
+    comp = Compression()
+    huff_comp = HuffmanCompression()
+    choice = int(choice)
+    filnavn = input("Skriv filnavn på komprimert fil:")
+
     print("----------------------------------------")
-    filnavn = input("Skriv navn til komprimert fil:")
-    ferdig_filnavn = "ferdig_"+filnavn
-    print("Fil som pakkes ut:",filnavn,"| Original størrelse",str(os.path.getsize(filnavn))+"B", "Lagres som: "+ferdig_filnavn)
-    start = datetime.now()
-    comp.extract(filnavn,ferdig_filnavn)
-    print("Utpakking tok:", str((datetime.now() - start).seconds) + 's')
-    print("Ny størrelse er:", str(os.path.getsize(ferdig_filnavn)) + "B")
-    print("----------------------------------------")
-    comp.check_differences(filnavn.replace("comp_",""),ferdig_filnavn)
+    if choice == 3:
+        huff_filnavn = "huff_"+filnavn
+        print("Fil som pakkes ut:",filnavn,"| Original størrelse",str(os.path.getsize(filnavn))+"B", "Lagres som: "+huff_filnavn)
+        start = datetime.now()
+        huff_comp.decode_file(filnavn,huff_filnavn)
+        print("Utpakking tok:", str((datetime.now() - start).seconds) + 's')
+        print("Ny størrelse er:", str(os.path.getsize(huff_filnavn)) + "B")
+        print("----------------------------------------")
+        lempel_filnavn = "lempel_"+huff_filnavn
+        print("Fil som pakkes ut:",huff_filnavn,"| Original størrelse",str(os.path.getsize(huff_filnavn))+"B", "Lagres som: "+lempel_filnavn)
+        start = datetime.now()
+        comp.extract(huff_filnavn,lempel_filnavn)
+        print("Utpakking tok:", str((datetime.now() - start).seconds) + 's')
+        print("Ny størrelse er:", str(os.path.getsize(lempel_filnavn)) + "B")
+        ferdig_fil = lempel_filnavn
+    elif choice == 1:
+        print("----------------------------------------")
+        lempel_filnavn = "lempel_" + filnavn
+        print("Fil som pakkes ut:", filnavn, "| Original størrelse", str(os.path.getsize(filnavn)) + "B","Lagres som: " + lempel_filnavn)
+        start = datetime.now()
+        comp.extract(filnavn, lempel_filnavn)
+        print("Utpakking tok:", str((datetime.now() - start).seconds) + 's')
+        print("Ny størrelse er:", str(os.path.getsize(lempel_filnavn)) + "B")
+        ferdig_fil = lempel_filnavn
+    else:
+        huff_filnavn = "huff_"+filnavn
+        print("Fil som pakkes ut:",filnavn,"| Original størrelse",str(os.path.getsize(filnavn))+"B", "Lagres som: "+huff_filnavn)
+        start = datetime.now()
+        huff_comp.decode_file(filnavn,huff_filnavn)
+        print("Utpakking tok:", str((datetime.now() - start).seconds) + 's')
+        print("Ny størrelse er:", str(os.path.getsize(huff_filnavn)) + "B")
+        ferdig_fil = huff_filnavn
+
+    return ferdig_fil
 
 if __name__ == '__main__':
-    compress()
-    extract()
+    choice = input("Ønsker du lempel, huffman, begge? Skriv henholdsvis 1,2,3: ")
+    filnavn = input("Skriv fil for komprimering:")
+    ferdig_fil = compress(choice,filnavn)
+    ferdig_fil = extract(choice)
+    comp = Compression()
+    comp.check_differences(filnavn,ferdig_fil)
